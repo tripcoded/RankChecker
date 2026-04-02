@@ -26,18 +26,40 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
+function toNullableNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const cleaned = value.trim();
+  if (!cleaned) {
+    return null;
+  }
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export default function Dashboard({ rollNo, onLogout }: DashboardProps) {
   const [data, setData] = useState<any>(null);
+  const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const res = await fetch(`/api/student/${rollNo}`);
+        if (!res.ok) {
+          setData(null);
+          setMessage('Your result is being fetched. Please check back in a moment.');
+          return;
+        }
         const result = await res.json();
         setData(result);
       } catch (err) {
         console.error('Failed to fetch result');
+        setMessage('Unable to fetch result right now.');
       } finally {
         setLoading(false);
       }
@@ -61,18 +83,56 @@ export default function Dashboard({ rollNo, onLogout }: DashboardProps) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-[#f8f9fa] p-4">
         <h2 className="text-2xl font-bold text-gray-900 mb-4">Result Not Found</h2>
-        <p className="text-gray-500 mb-8">Your result is still being processed. Please check back later.</p>
+        <p className="text-gray-500 mb-8">{message || 'Your result is still being processed. Please check back later.'}</p>
         <button onClick={onLogout} className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-bold">Back to Login</button>
       </div>
     );
   }
 
-  const chartData = data.subjects.map((s: any) => ({
+  if (data.result_status === 'not_found') {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#f8f9fa] p-4">
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">No Record Found</h2>
+        <p className="text-gray-500 mb-8">{data.scrape_error || 'No record was found for these credentials on the university portal.'}</p>
+        <button onClick={onLogout} className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-bold">Back to Login</button>
+      </div>
+    );
+  }
+
+  if (data.result_status === 'error' || data.result_status === 'pending') {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#f8f9fa] p-4">
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">Result Processing</h2>
+        <p className="text-gray-500 mb-8">
+          {data.scrape_error || 'Result scrape is still in progress or temporarily failed. Please try again shortly.'}
+        </p>
+        <button onClick={onLogout} className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-bold">Back to Login</button>
+      </div>
+    );
+  }
+
+  const chartData = (data.subjects || []).map((s: any) => ({
     name: s.subject_name,
-    marks: s.marks
+    marks: toNullableNumber(s.marks) ?? 0,
   }));
 
   const COLORS = ['#4f46e5', '#6366f1', '#818cf8', '#a5b4fc', '#c7d2fe'];
+  const cgpaValue = toNullableNumber(data.cgpa);
+  const sgpaValue = toNullableNumber(data.sgpa);
+  const totalMarksValue = toNullableNumber(data.total_marks);
+  const cgpa = cgpaValue !== null ? cgpaValue.toFixed(2) : 'N/A';
+  const sgpa = sgpaValue !== null ? sgpaValue.toFixed(2) : 'N/A';
+  const branch = data.branch && data.branch !== 'N/A' ? data.branch : 'Result Portal';
+  const batchRankSgpa = toNullableNumber(data.rankInBatchBySgpa);
+  const batchRankCgpa = toNullableNumber(data.rankInBatchByCgpa);
+  const deptRankSgpa = toNullableNumber(data.rankInDepartmentBySgpa);
+  const deptRankCgpa = toNullableNumber(data.rankInDepartmentByCgpa);
+  const safeBatchRankSgpa = batchRankSgpa !== null ? `#${batchRankSgpa}` : 'N/A';
+  const safeBatchRankCgpa = batchRankCgpa !== null ? `#${batchRankCgpa}` : 'N/A';
+  const safeDeptRankSgpa = deptRankSgpa !== null ? `#${deptRankSgpa}` : 'N/A';
+  const safeDeptRankCgpa = deptRankCgpa !== null ? `#${deptRankCgpa}` : 'N/A';
+  const batchSize = toNullableNumber(data.batchSize);
+  const departmentSize = toNullableNumber(data.departmentSize);
 
   return (
     <div className="min-h-screen bg-[#f8f9fa] pb-12">
@@ -109,19 +169,19 @@ export default function Dashboard({ rollNo, onLogout }: DashboardProps) {
             </div>
             <h1 className="text-4xl font-black text-gray-900 tracking-tight mb-2">{data.name}</h1>
             <div className="flex flex-wrap gap-4 text-gray-500 font-medium">
-              <span className="flex items-center gap-1.5"><Users className="w-4 h-4" /> {data.branch} Department</span>
+              <span className="flex items-center gap-1.5"><Users className="w-4 h-4" /> {branch}</span>
               <span className="flex items-center gap-1.5"><BookOpen className="w-4 h-4" /> Semester {data.semester}</span>
               <span className="flex items-center gap-1.5"><Calendar className="w-4 h-4" /> {data.roll_no}</span>
             </div>
           </div>
           <div className="flex gap-4">
             <div className="bg-indigo-50 px-8 py-4 rounded-3xl text-center border border-indigo-100">
-              <div className="text-indigo-600 text-3xl font-black">{data.cgpa.toFixed(2)}</div>
+              <div className="text-indigo-600 text-3xl font-black">{cgpa}</div>
               <div className="text-indigo-400 text-xs font-bold uppercase tracking-wider">CGPA</div>
             </div>
             <div className="bg-emerald-50 px-8 py-4 rounded-3xl text-center border border-emerald-100">
-              <div className="text-emerald-600 text-3xl font-black">{data.percentage.toFixed(1)}%</div>
-              <div className="text-emerald-400 text-xs font-bold uppercase tracking-wider">Percentage</div>
+              <div className="text-emerald-600 text-3xl font-black">{sgpa}</div>
+              <div className="text-emerald-400 text-xs font-bold uppercase tracking-wider">SGPA</div>
             </div>
           </div>
         </motion.div>
@@ -141,11 +201,19 @@ export default function Dashboard({ rollNo, onLogout }: DashboardProps) {
               <div className="w-12 h-12 bg-indigo-100 rounded-2xl flex items-center justify-center mb-6">
                 <Trophy className="text-indigo-600 w-6 h-6" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">Class Rank</h3>
-              <p className="text-gray-500 mb-6 font-medium">Your position within the {data.branch} department.</p>
-              <div className="flex items-baseline gap-2">
-                <span className="text-5xl font-black text-indigo-600">#{data.rankInClass}</span>
-                <span className="text-gray-400 font-bold">of total students</span>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Batch Rank</h3>
+              <p className="text-gray-500 mb-6 font-medium">
+                Compared within {data.batchName || 'batch'} prefix {data.batchCode || 'N/A'} ({batchSize ?? 0} students).
+              </p>
+              <div className="space-y-3">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-black text-indigo-600">{safeBatchRankSgpa}</span>
+                  <span className="text-gray-400 font-bold uppercase tracking-wide text-xs">By SGPA</span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-black text-indigo-500">{safeBatchRankCgpa}</span>
+                  <span className="text-gray-400 font-bold uppercase tracking-wide text-xs">By CGPA</span>
+                </div>
               </div>
             </div>
           </motion.div>
@@ -164,10 +232,18 @@ export default function Dashboard({ rollNo, onLogout }: DashboardProps) {
                 <Users className="text-emerald-600 w-6 h-6" />
               </div>
               <h3 className="text-xl font-bold text-gray-900 mb-2">Department Rank</h3>
-              <p className="text-gray-500 mb-6 font-medium">Your position across all engineering branches.</p>
-              <div className="flex items-baseline gap-2">
-                <span className="text-5xl font-black text-emerald-600">#{data.rankInDepartment}</span>
-                <span className="text-gray-400 font-bold">overall rank</span>
+              <p className="text-gray-500 mb-6 font-medium">
+                Compared across all scraped students ({departmentSize ?? 0} students).
+              </p>
+              <div className="space-y-3">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-black text-emerald-600">{safeDeptRankSgpa}</span>
+                  <span className="text-gray-400 font-bold uppercase tracking-wide text-xs">By SGPA</span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-black text-emerald-500">{safeDeptRankCgpa}</span>
+                  <span className="text-gray-400 font-bold uppercase tracking-wide text-xs">By CGPA</span>
+                </div>
               </div>
             </div>
           </motion.div>
@@ -230,7 +306,7 @@ export default function Dashboard({ rollNo, onLogout }: DashboardProps) {
           >
             <h3 className="text-2xl font-bold text-gray-900 mb-8">Scoreboard</h3>
             <div className="space-y-6">
-              {data.subjects.map((sub: any, i: number) => (
+              {(data.subjects || []).map((sub: any, i: number) => (
                 <div key={i} className="flex items-center justify-between group cursor-default">
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center text-gray-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
@@ -238,20 +314,27 @@ export default function Dashboard({ rollNo, onLogout }: DashboardProps) {
                     </div>
                     <div>
                       <div className="font-bold text-gray-900">{sub.subject_name}</div>
-                      <div className="text-xs text-gray-400 font-bold uppercase tracking-wider">Theory + Lab</div>
+                      <div className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                        {sub.course_code || 'Theory + Lab'} {sub.grade_awarded ? ` • ${sub.grade_awarded}` : ''}
+                      </div>
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-lg font-black text-gray-900">{sub.marks}</div>
+                    <div className="text-lg font-black text-gray-900">{toNullableNumber(sub.marks) ?? 'N/A'}</div>
                     <div className="text-xs text-gray-400 font-bold uppercase tracking-wider">Marks</div>
                   </div>
                 </div>
               ))}
+              {(!data.subjects || data.subjects.length === 0) && (
+                <div className="text-sm text-gray-500">No subject-wise marks were detected on the source result page.</div>
+              )}
             </div>
-            <button className="w-full mt-8 py-4 border-2 border-dashed border-gray-200 rounded-2xl text-gray-400 font-bold hover:border-indigo-300 hover:text-indigo-600 transition-all flex items-center justify-center gap-2">
-              Download Marksheet
-              <ChevronRight className="w-4 h-4" />
-            </button>
+            {totalMarksValue !== null && (
+              <button className="w-full mt-8 py-4 border-2 border-dashed border-gray-200 rounded-2xl text-gray-400 font-bold hover:border-indigo-300 hover:text-indigo-600 transition-all flex items-center justify-center gap-2">
+                Total Marks: {totalMarksValue}
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
           </motion.div>
         </div>
       </main>

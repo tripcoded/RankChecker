@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
 import Login from './components/Login.tsx';
 import Dashboard from './components/Dashboard.tsx';
-import Admin from './components/Admin.tsx';
 
-type View = 'login' | 'dashboard' | 'admin';
+type View = 'login' | 'dashboard';
 
 export default function App() {
   const [view, setView] = useState<View>('login');
@@ -22,22 +21,13 @@ export default function App() {
   return (
     <div className="font-sans text-gray-900 bg-[#f8f9fa] min-h-screen selection:bg-indigo-100 selection:text-indigo-600">
       {view === 'login' && (
-        <Login 
-          onLogin={handleLogin} 
-          onAdminClick={() => setView('admin')} 
-        />
+        <Login onLogin={handleLogin} />
       )}
       
       {view === 'dashboard' && rollNo && (
         <Dashboard 
           rollNo={rollNo} 
           onLogout={handleLogout} 
-        />
-      )}
-
-      {view === 'admin' && (
-        <Admin 
-          onBack={() => setView('login')} 
         />
       )}
     </div>

@@ -4,10 +4,16 @@ import { LogIn, GraduationCap } from 'lucide-react';
 
 interface LoginProps {
   onLogin: (rollNo: string) => void;
-  onAdminClick: () => void;
 }
 
-export default function Login({ onLogin, onAdminClick }: LoginProps) {
+const BATCH_PREFIXES = [
+  { name: 'IT', prefix: '2514670010' },
+  { name: 'CSE', prefix: '2514750010' },
+  { name: 'ECE', prefix: '2514830010' },
+  { name: 'Mechanical', prefix: '2514910010' },
+];
+
+export default function Login({ onLogin }: LoginProps) {
   const [rollNo, setRollNo] = useState('');
   const [dob, setDob] = useState('');
   const [error, setError] = useState('');
@@ -49,7 +55,7 @@ export default function Login({ onLogin, onAdminClick }: LoginProps) {
             <GraduationCap className="text-white w-10 h-10" />
           </div>
           <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Result Portal</h1>
-          <p className="text-gray-500 mt-2 text-center">Enter your credentials to view your academic performance and ranks.</p>
+          <p className="text-gray-500 mt-2 text-center">Enter roll number and DOB to fetch your semester 3 result.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -74,6 +80,26 @@ export default function Login({ onLogin, onAdminClick }: LoginProps) {
               placeholder="DD-MM-YYYY"
               required
             />
+            <div className="mt-3">
+              <p className="text-xs text-gray-500 mb-2 ml-1">Quick batch prefix</p>
+              <div className="flex flex-wrap gap-2">
+                {BATCH_PREFIXES.map((batch) => (
+                  <button
+                    key={batch.prefix}
+                    type="button"
+                    onClick={() => setRollNo(batch.prefix)}
+                    className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors ${
+                      rollNo.startsWith(batch.prefix)
+                        ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-200 hover:text-indigo-700'
+                    }`}
+                  >
+                    {batch.name} ({batch.prefix})
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-2 ml-1">Click one, then add remaining roll digits if needed.</p>
+            </div>
           </div>
 
           {error && (
@@ -99,15 +125,6 @@ export default function Login({ onLogin, onAdminClick }: LoginProps) {
             )}
           </button>
         </form>
-
-        <div className="mt-8 pt-6 border-t border-gray-100 text-center">
-          <button 
-            onClick={onAdminClick}
-            className="text-indigo-600 font-semibold hover:underline text-sm"
-          >
-            Admin Access
-          </button>
-        </div>
       </motion.div>
     </div>
   );

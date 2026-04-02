@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+uploads/
+college_results.db
+college_results.db-shm
+college_results.db-wal

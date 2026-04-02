@@ -1,20 +1,49 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# DDU Result Checker
 
-# Run and deploy your AI Studio app
+Result portal for DDU (semester fixed to 3) with:
+- server-side scraping
+- Supabase/SQLite storage
+- student login + rank from stored data
 
-This contains everything you need to run your app locally.
+## How to Add Students for Scraping
 
-View your app in AI Studio: https://ai.studio/apps/9ba0c996-4db7-4310-8e8a-c71f1360df0c
+Edit `server/scraper.ts` and fill:
+
+```ts
+const MANUAL_CREDENTIAL_BATCH = [
+  ['2514670010038', '05-11-2006'],
+  { rollNo: '2514670010038', dob: '05-11-2006' },
+  { rollNo: '2514670010041', dob: '22-09-2005' },
+];
+```
+
+On server start, these are auto-upserted to DB and auto-queued for scraping.
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
+1. `npm install`
+2. Configure `.env.local` (Supabase keys if using Supabase)
+3. `npm run dev`
+4. Open `http://localhost:3000`
 
+Use the same roll no + DOB to login after scrape is stored.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## API Endpoints
+
+- `GET /api/health`
+- `POST /api/login`
+- `GET /api/student/:rollNo`
+- `GET /api/scrape-status`
+
+## Scraper Defaults
+
+- `RESULT_PORTAL_URL=https://ddugorakhpur.com/result2023/searchresult_new.aspx`
+- `RESULT_PORTAL_SEMESTER=3`
+
+## Supabase Setup
+
+1. Run [server/supabase-schema.sql](server/supabase-schema.sql) in Supabase SQL editor.
+2. Set `SUPABASE_URL` and one key:
+   - `SUPABASE_SERVICE_ROLE_KEY` (recommended)
+   - or `SUPABASE_API_KEY`
+   - or `SUPABASE_ANON_KEY` (requires permissive RLS policies)

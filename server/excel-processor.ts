@@ -1,30 +1,42 @@
-import * as XLSX from 'xlsx';
-import db from './db.js';
+import * as XLSXModule from 'xlsx';
+import { normalizeDob, normalizeRollNo } from './normalizers.js';
+import { upsertCredentials } from './repository.js';
 
-export function processExcelCredentials(filePath: string) {
+const XLSX = (XLSXModule as any).default ?? XLSXModule;
+
+function pickField(row: Record<string, unknown>, candidates: string[]): unknown {
+  const entries = Object.entries(row);
+  for (const [key, value] of entries) {
+    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (candidates.some((candidate) => normalizedKey === candidate || normalizedKey.includes(candidate))) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+export async function processExcelCredentials(filePath: string) {
+  if (typeof XLSX.readFile !== 'function') {
+    throw new Error('XLSX parser is not initialized correctly on server.');
+  }
+
   const workbook = XLSX.readFile(filePath);
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
-  const data = XLSX.utils.sheet_to_json(worksheet);
+  const data = XLSX.utils.sheet_to_json(worksheet, { raw: true }) as Array<Record<string, unknown>>;
+  const normalizedRows: Array<{ rollNo: string; dob: string }> = [];
 
-  const insertCredential = db.prepare(`
-    INSERT INTO credentials (roll_no, dob)
-    VALUES (?, ?)
-    ON CONFLICT(roll_no) DO UPDATE SET
-      dob = excluded.dob
-  `);
+  for (const row of data) {
+    const rollNoRaw = pickField(row, ['rollno', 'rollnumber', 'roll', 'enrollmentno', 'enrollment']);
+    const dobRaw = pickField(row, ['dob', 'dateofbirth', 'birthdate']);
+    const rollNo = normalizeRollNo(rollNoRaw);
+    const dob = normalizeDob(dobRaw);
 
-  const transaction = db.transaction((rows: any[]) => {
-    for (const row of rows) {
-      // Assuming columns are 'Roll No' and 'DOB'
-      const rollNo = row['Roll No'] || row['rollNo'] || row['roll_no'];
-      const dob = row['DOB'] || row['dob'];
-      if (rollNo && dob) {
-        insertCredential.run(rollNo.toString(), dob.toString());
-      }
+    if (rollNo && dob) {
+      normalizedRows.push({ rollNo, dob });
     }
-  });
+  }
 
-  transaction(data);
-  return { count: data.length };
+  const count = await upsertCredentials(normalizedRows);
+  return { count };
 }
