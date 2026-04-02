@@ -1,0 +1,5 @@
+{
+  "name": "College Result Scraper & Ranker",
+  "description": "A full-stack application to scrape college results, calculate ranks across departments, and provide a student dashboard.",
+  "requestFramePermissions": []
+}
