@@ -669,14 +669,12 @@ function createMetricRanking(students: RankingStudent[], metric: 'sgpa' | 'cgpa'
     });
 
   const output: RankingEntry[] = [];
-  let position = 0;
   let rank = 0;
   let prevValue: number | null = null;
 
   for (const row of withMetric) {
-    position += 1;
     if (prevValue === null || row.value !== prevValue) {
-      rank = position;
+      rank += 1;
       prevValue = row.value;
     }
 
