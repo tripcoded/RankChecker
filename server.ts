@@ -6,12 +6,14 @@ import { normalizeDob, normalizeRollNo } from './server/normalizers.js';
 import {
   findCredential,
   getCredentialStats,
+  listPendingResultCredentials,
+  listPendingResults,
   getResultStatusCounts,
   getStorageEngine,
   isCredentialScraped,
   upsertCredentials,
 } from './server/repository.js';
-import { getManualCredentialBatch, getStudentRanks, scrapeStudentResult } from './server/scraper.js';
+import { getManualCredentialBatch, getRankings, getStudentRanks, scrapeStudentResult } from './server/scraper.js';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();
@@ -191,6 +193,34 @@ async function startServer() {
       return res.status(404).json({ error: 'Student not found' });
     }
     return res.json(result);
+  });
+
+  app.get('/api/rankings', async (req, res) => {
+    const scope = req.query.scope === 'batch' ? 'batch' : 'department';
+    const batchCode = typeof req.query.batchCode === 'string' ? req.query.batchCode.trim() : '';
+    const data = await getRankings({ scope, batchCode });
+    return res.json({ success: true, ...data });
+  });
+
+  app.get('/api/pending-results', async (_req, res) => {
+    const rows = await listPendingResults();
+    return res.json({ success: true, count: rows.length, rows });
+  });
+
+  app.post('/api/scrape-pending-results', async (_req, res) => {
+    const rows = await listPendingResultCredentials();
+    let enqueued = 0;
+    for (const row of rows) {
+      if (enqueueTask(row.roll_no, row.dob, 'manual')) {
+        enqueued += 1;
+      }
+    }
+    return res.json({
+      success: true,
+      totalPending: rows.length,
+      enqueued,
+      message: `Queued ${enqueued} pending-result students.`,
+    });
   });
 
   app.get('/api/scrape-status', async (_req, res) => {

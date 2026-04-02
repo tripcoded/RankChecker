@@ -4,6 +4,7 @@ import { LogIn, GraduationCap } from 'lucide-react';
 
 interface LoginProps {
   onLogin: (rollNo: string) => void;
+  onOpenRankList: () => void;
 }
 
 const BATCH_PREFIXES = [
@@ -13,7 +14,7 @@ const BATCH_PREFIXES = [
   { name: 'Mechanical', prefix: '2514910010' },
 ];
 
-export default function Login({ onLogin }: LoginProps) {
+export default function Login({ onLogin, onOpenRankList }: LoginProps) {
   const [rollNo, setRollNo] = useState('');
   const [dob, setDob] = useState('');
   const [error, setError] = useState('');
@@ -56,6 +57,13 @@ export default function Login({ onLogin }: LoginProps) {
           </div>
           <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Result Portal</h1>
           <p className="text-gray-500 mt-2 text-center">Enter roll number and DOB to fetch your semester 3 result.</p>
+          <button
+            type="button"
+            onClick={onOpenRankList}
+            className="mt-4 text-sm font-semibold text-indigo-600 hover:text-indigo-700 underline underline-offset-4"
+          >
+            View Rank List
+          </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">

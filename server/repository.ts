@@ -39,7 +39,7 @@ export type StudentRow = {
 export type SaveScrapePayload = {
   rollNo: string;
   dob: string;
-  status: 'success' | 'not_found';
+  status: 'success' | 'not_found' | 'result_pending';
   name: string;
   branch: string;
   semester: string;
@@ -85,21 +85,28 @@ function toNullableNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function extractSummaryFromRawResult(rawResult: unknown): { sgpa: number | null; cgpa: number | null } {
-  let parsed = rawResult;
-  if (typeof parsed === 'string') {
-    try {
-      parsed = JSON.parse(parsed);
-    } catch {
-      // Keep original string for regex parsing.
-    }
+function parseRawResult(rawResult: unknown): unknown {
+  if (typeof rawResult !== 'string') {
+    return rawResult;
   }
+  try {
+    return JSON.parse(rawResult);
+  } catch {
+    return rawResult;
+  }
+}
+
+function extractSummaryFromRawResult(rawResult: unknown): { sgpa: number | null; cgpa: number | null; resultLabel: string | null } {
+  const parsed = parseRawResult(rawResult);
 
   const summary = typeof parsed === 'object' && parsed !== null
-    ? (parsed as { summary?: { sgpa?: unknown; cgpa?: unknown } }).summary
+    ? (parsed as { summary?: { sgpa?: unknown; cgpa?: unknown; resultLabel?: unknown } }).summary
     : undefined;
   const sgpaFromSummary = toNullableNumber(summary?.sgpa);
   const cgpaFromSummary = toNullableNumber(summary?.cgpa);
+  const resultLabelFromSummary = typeof summary?.resultLabel === 'string'
+    ? summary.resultLabel.trim().toUpperCase()
+    : null;
 
   const rawText = typeof parsed === 'object' && parsed !== null
     ? String((parsed as { rawText?: unknown }).rawText || '')
@@ -109,22 +116,22 @@ function extractSummaryFromRawResult(rawResult: unknown): { sgpa: number | null;
     || normalizedText.match(/\bsgpa\b[^0-9]{0,8}(\d+(?:\.\d+)?)/i);
   const cgpaMatch = normalizedText.match(/cumulative\s*grade\s*point\s*average\s*\(cgpa\)\s*[:\-]?\s*(\d+(?:\.\d+)?)/i)
     || normalizedText.match(/\bcgpa\b[^0-9]{0,8}(\d+(?:\.\d+)?)/i);
+  const resultMatch = normalizedText.match(/\bresult\b[^A-Z0-9]{0,20}(INC|PASSED|PROMOTED|FAIL|FAILED)\b/i);
 
   return {
     sgpa: sgpaFromSummary ?? (sgpaMatch ? Number(sgpaMatch[1]) : null),
     cgpa: cgpaFromSummary ?? (cgpaMatch ? Number(cgpaMatch[1]) : null),
+    resultLabel: resultLabelFromSummary ?? (resultMatch ? resultMatch[1].toUpperCase() : null),
   };
 }
 
+function isIncResult(rawResult: unknown): boolean {
+  const { resultLabel } = extractSummaryFromRawResult(rawResult);
+  return resultLabel === 'INC';
+}
+
 function normalizeStudentRow(student: StudentRow): StudentRow {
-  let parsedRawResult: unknown = student.raw_result;
-  if (typeof parsedRawResult === 'string') {
-    try {
-      parsedRawResult = JSON.parse(parsedRawResult);
-    } catch {
-      parsedRawResult = student.raw_result;
-    }
-  }
+  const parsedRawResult = parseRawResult(student.raw_result);
   const { sgpa, cgpa } = extractSummaryFromRawResult(parsedRawResult);
 
   return {
@@ -315,6 +322,7 @@ export async function getResultStatusCounts(): Promise<{
   success: number;
   notFound: number;
   error: number;
+  resultPending: number;
 }> {
   if (!USING_SUPABASE) {
     const rows = db.prepare(`
@@ -323,7 +331,7 @@ export async function getResultStatusCounts(): Promise<{
       GROUP BY result_status
     `).all() as Array<{ result_status: string | null; count: number }>;
 
-    const counts = { success: 0, notFound: 0, error: 0 };
+    const counts = { success: 0, notFound: 0, error: 0, resultPending: 0 };
     for (const row of rows) {
       if (row.result_status === 'success') {
         counts.success = row.count;
@@ -331,6 +339,8 @@ export async function getResultStatusCounts(): Promise<{
         counts.notFound = row.count;
       } else if (row.result_status === 'error') {
         counts.error = row.count;
+      } else if (row.result_status === 'result_pending') {
+        counts.resultPending = row.count;
       }
     }
     return counts;
@@ -340,7 +350,7 @@ export async function getResultStatusCounts(): Promise<{
     select: 'result_status',
   });
   const rows = await supabaseRequest<Array<{ result_status: string | null }>>(`students?${query.toString()}`);
-  const counts = { success: 0, notFound: 0, error: 0 };
+  const counts = { success: 0, notFound: 0, error: 0, resultPending: 0 };
   for (const row of rows) {
     if (row.result_status === 'success') {
       counts.success += 1;
@@ -348,9 +358,75 @@ export async function getResultStatusCounts(): Promise<{
       counts.notFound += 1;
     } else if (row.result_status === 'error') {
       counts.error += 1;
+    } else if (row.result_status === 'result_pending') {
+      counts.resultPending += 1;
     }
   }
   return counts;
+}
+
+export type PendingResultRow = {
+  roll_no: string;
+  name: string | null;
+  semester: string | null;
+  result_status: string | null;
+  scrape_error: string | null;
+  last_updated: string | null;
+};
+
+type PendingResultCandidateRow = PendingResultRow & {
+  raw_result: unknown;
+};
+
+export async function listPendingResults(limit = 2000): Promise<PendingResultRow[]> {
+  const filterRows = (rows: PendingResultCandidateRow[]): PendingResultRow[] => rows
+    .filter((row) => row.result_status === 'result_pending' || isIncResult(row.raw_result))
+    .map(({ raw_result: _raw, ...rest }) => rest)
+    .slice(0, limit);
+
+  if (!USING_SUPABASE) {
+    const rows = db.prepare(`
+      SELECT roll_no, name, semester, result_status, scrape_error, last_updated, raw_result
+      FROM students
+      ORDER BY last_updated DESC
+      LIMIT ?
+    `).all(Math.max(limit, 5000)) as PendingResultCandidateRow[];
+    return filterRows(rows);
+  }
+
+  const query = new URLSearchParams({
+    select: 'roll_no,name,semester,result_status,scrape_error,last_updated,raw_result',
+    order: 'last_updated.desc',
+    limit: String(Math.max(limit, 5000)),
+  });
+  const rows = await supabaseRequest<PendingResultCandidateRow[]>(`students?${query.toString()}`);
+  return filterRows(rows);
+}
+
+export async function listPendingResultCredentials(limit = 2000): Promise<Array<{ roll_no: string; dob: string }>> {
+  const pendingRows = await listPendingResults(limit);
+  const rollNos = Array.from(new Set(pendingRows.map((row) => row.roll_no).filter(Boolean)));
+  if (rollNos.length === 0) {
+    return [];
+  }
+
+  if (!USING_SUPABASE) {
+    const placeholders = rollNos.map(() => '?').join(',');
+    return db.prepare(`
+      SELECT roll_no, dob
+      FROM credentials
+      WHERE roll_no IN (${placeholders})
+      LIMIT ?
+    `).all(...rollNos, limit) as Array<{ roll_no: string; dob: string }>;
+  }
+
+  const inValues = rollNos.map((value) => `"${value}"`).join(',');
+  const query = new URLSearchParams({
+    select: 'roll_no,dob',
+    roll_no: `in.(${inValues})`,
+    limit: String(limit),
+  });
+  return await supabaseRequest<Array<{ roll_no: string; dob: string }>>(`credentials?${query.toString()}`);
 }
 
 async function setCredentialScraped(rollNo: string, isScraped: boolean): Promise<void> {
@@ -566,31 +642,35 @@ export async function getStudentWithSubjects(rollNo: string): Promise<{ student:
 }
 
 export async function listSuccessfulStudents(semester?: string | null): Promise<StudentRow[]> {
+  const normalizeAndFilter = (rows: StudentRow[]) => rows
+    .map(normalizeStudentRow)
+    .filter((row) => !isIncResult(row.raw_result));
+
   if (!USING_SUPABASE) {
     if (!semester) {
-      return (db.prepare(`
-        SELECT roll_no, semester, total_marks, percentage, cgpa, raw_result, result_status
+      return normalizeAndFilter(db.prepare(`
+        SELECT roll_no, name, semester, total_marks, percentage, cgpa, raw_result, result_status
         FROM students
         WHERE result_status = 'success'
-      `).all() as StudentRow[]).map(normalizeStudentRow);
+      `).all() as StudentRow[]);
     }
 
-    return (db.prepare(`
-      SELECT roll_no, semester, total_marks, percentage, cgpa, raw_result, result_status
+    return normalizeAndFilter(db.prepare(`
+      SELECT roll_no, name, semester, total_marks, percentage, cgpa, raw_result, result_status
       FROM students
       WHERE result_status = 'success' AND semester = ?
-    `).all(semester) as StudentRow[]).map(normalizeStudentRow);
+    `).all(semester) as StudentRow[]);
   }
 
   const query = new URLSearchParams({
-    select: 'roll_no,semester,total_marks,percentage,cgpa,raw_result,result_status',
+    select: 'roll_no,name,semester,total_marks,percentage,cgpa,raw_result,result_status',
     result_status: 'eq.success',
   });
   if (semester) {
     query.set('semester', `eq.${semester}`);
   }
   const rows = await supabaseRequest<StudentRow[]>(`students?${query.toString()}`);
-  return rows.map(normalizeStudentRow);
+  return normalizeAndFilter(rows);
 }
 
 export function isCredentialScraped(credential: CredentialRow): boolean {

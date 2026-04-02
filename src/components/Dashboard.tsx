@@ -24,6 +24,7 @@ import {
 interface DashboardProps {
   rollNo: string;
   onLogout: () => void;
+  onOpenRankList: (batchCode?: string) => void;
 }
 
 function toNullableNumber(value: unknown): number | null {
@@ -41,7 +42,7 @@ function toNullableNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export default function Dashboard({ rollNo, onLogout }: DashboardProps) {
+export default function Dashboard({ rollNo, onLogout, onOpenRankList }: DashboardProps) {
   const [data, setData] = useState<any>(null);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
@@ -99,10 +100,12 @@ export default function Dashboard({ rollNo, onLogout }: DashboardProps) {
     );
   }
 
-  if (data.result_status === 'error' || data.result_status === 'pending') {
+  if (data.result_status === 'error' || data.result_status === 'pending' || data.result_status === 'result_pending') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-[#f8f9fa] p-4">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Result Processing</h2>
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">
+          {data.result_status === 'result_pending' ? 'Result Not Fully Declared' : 'Result Processing'}
+        </h2>
         <p className="text-gray-500 mb-8">
           {data.scrape_error || 'Result scrape is still in progress or temporarily failed. Please try again shortly.'}
         </p>
@@ -145,6 +148,13 @@ export default function Dashboard({ rollNo, onLogout }: DashboardProps) {
             </div>
             <span className="text-xl font-bold text-gray-900 tracking-tight">Student Portal</span>
           </div>
+          <button 
+            onClick={() => onOpenRankList(typeof data?.batchCode === 'string' ? data.batchCode : undefined)}
+            className="flex items-center gap-2 text-indigo-600 hover:text-indigo-700 font-semibold transition-colors"
+          >
+            <Trophy className="w-5 h-5" />
+            Rank List
+          </button>
           <button 
             onClick={onLogout}
             className="flex items-center gap-2 text-gray-500 hover:text-red-600 font-semibold transition-colors"

@@ -1,6 +1,10 @@
 import db from './db.js';
 import type { CredentialRow, StudentRow, SubjectRow } from './repository.js';
 
+type SubjectMarkDbRow = SubjectRow & {
+  roll_no: string;
+};
+
 const SUPABASE_URL = process.env.SUPABASE_URL?.trim() || '';
 const SUPABASE_API_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || '';
 
@@ -118,7 +122,7 @@ async function migrateStudents() {
 
 async function migrateSubjectMarks() {
   console.log('📊 Migrating subject marks...');
-  const subjects = db.prepare('SELECT * FROM subject_marks').all() as SubjectRow[];
+  const subjects = db.prepare('SELECT * FROM subject_marks').all() as SubjectMarkDbRow[];
   
   if (subjects.length === 0) {
     console.log('  ✓ No subject marks to migrate');

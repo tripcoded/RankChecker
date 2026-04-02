@@ -6,6 +6,7 @@ import {
   saveScrapeError,
   saveScrapeResult,
 } from './repository.js';
+import { getBatchInfoFromRoll, getBatchNameFromCode } from './batch.js';
 
 const RESULT_URL = process.env.RESULT_PORTAL_URL || 'https://ddugorakhpur.com/result2023/searchresult_new.aspx';
 const FIXED_SEMESTER = process.env.RESULT_PORTAL_SEMESTER || '3';
@@ -13,13 +14,6 @@ const ALT_RESULT_URL = 'https://result.ddugu.ac.in/result2023/searchresult_new.a
 const NAV_TIMEOUT_MS = Number(process.env.SCRAPER_NAVIGATION_TIMEOUT_MS || 60000);
 const SELECTOR_TIMEOUT_MS = Number(process.env.SCRAPER_SELECTOR_TIMEOUT_MS || 20000);
 const SCRAPER_HEADLESS = process.env.SCRAPER_HEADLESS !== 'false';
-
-const BATCH_RULES = [
-  { name: 'IT', prefixes: ['2514670010', '2510670010'] },
-  { name: 'CSE', prefixes: ['2514750010'] },
-  { name: 'ECE', prefixes: ['2514830010'] },
-  { name: 'Mechanical', prefixes: ['2514910010'] },
-];
 
 export type ManualCredential = {
   rollNo: string;
@@ -423,7 +417,7 @@ type PortalExtraction = {
 };
 
 type ScrapedPayload = {
-  status: 'success' | 'not_found';
+  status: 'success' | 'not_found' | 'result_pending';
   message?: string;
   name: string;
   branch: string;
@@ -458,7 +452,7 @@ export function getManualCredentialBatch(): ManualCredential[] {
 
 export type ScrapeOutcome = {
   success: boolean;
-  status: 'success' | 'not_found' | 'error';
+  status: 'success' | 'not_found' | 'result_pending' | 'error';
   retryable: boolean;
   error?: string;
   data?: ScrapedPayload;
@@ -587,6 +581,7 @@ function extractSummaryFromText(rawText: string): {
   sgpa: number | null;
   cgpa: number | null;
   percentage: number | null;
+  resultLabel: string | null;
 } {
   const normalized = rawText.replace(/\s+/g, ' ').trim();
 
@@ -595,33 +590,14 @@ function extractSummaryFromText(rawText: string): {
   const cgpaMatch = normalized.match(/cumulative\s*grade\s*point\s*average\s*\(cgpa\)\s*[:\-]?\s*(\d+(?:\.\d+)?)/i)
     || normalized.match(/\bcgpa\b\s*[:\-]?\s*(\d+(?:\.\d+)?)/i);
   const percentageMatch = normalized.match(/(\d+(?:\.\d+)?)\s*%/);
+  const resultMatch = normalized.match(/\bresult\b[^A-Z0-9]{0,20}(INC|PASSED|PROMOTED|FAIL|FAILED)\b/i);
 
   return {
     sgpa: sgpaMatch ? Number(sgpaMatch[1]) : null,
     cgpa: cgpaMatch ? Number(cgpaMatch[1]) : null,
     percentage: percentageMatch ? Number(percentageMatch[1]) : null,
+    resultLabel: resultMatch ? resultMatch[1].toUpperCase() : null,
   };
-}
-
-function getBatchInfo(rollNo: string): { code: string; name: string } {
-  const digitsOnly = rollNo.replace(/\D/g, '');
-  for (const rule of BATCH_RULES) {
-    for (const prefix of rule.prefixes) {
-      if (digitsOnly.startsWith(prefix)) {
-        return { code: prefix, name: rule.name };
-      }
-    }
-  }
-
-  if (digitsOnly.length >= 10) {
-    return { code: digitsOnly.slice(0, 10), name: 'General' };
-  }
-
-  if (rollNo.length > 3) {
-    return { code: rollNo.slice(0, -3), name: 'General' };
-  }
-
-  return { code: rollNo, name: 'General' };
 }
 
 function metricOf(student: { sgpa?: unknown; cgpa?: unknown }, metric: 'sgpa' | 'cgpa'): number | null {
@@ -651,6 +627,72 @@ function rankByMetric(
   return ahead + 1;
 }
 
+type RankingStudent = {
+  roll_no: string;
+  name?: string | null;
+  sgpa?: unknown;
+  cgpa?: unknown;
+  semester?: string | null;
+};
+
+export type RankingEntry = {
+  rank: number;
+  rollNo: string;
+  name: string;
+  value: number;
+  batchCode: string;
+  batchName: string;
+};
+
+function createMetricRanking(students: RankingStudent[], metric: 'sgpa' | 'cgpa'): RankingEntry[] {
+  const withMetric = students
+    .map((student) => {
+      const value = metricOf(student, metric);
+      if (value === null) {
+        return null;
+      }
+      const batch = getBatchInfoFromRoll(student.roll_no || '');
+      return {
+        rollNo: student.roll_no,
+        name: (student.name || '').trim() || student.roll_no,
+        value,
+        batchCode: batch.code,
+        batchName: batch.name,
+      };
+    })
+    .filter((item): item is { rollNo: string; name: string; value: number; batchCode: string; batchName: string } => item !== null)
+    .sort((a, b) => {
+      if (b.value !== a.value) {
+        return b.value - a.value;
+      }
+      return a.rollNo.localeCompare(b.rollNo);
+    });
+
+  const output: RankingEntry[] = [];
+  let position = 0;
+  let rank = 0;
+  let prevValue: number | null = null;
+
+  for (const row of withMetric) {
+    position += 1;
+    if (prevValue === null || row.value !== prevValue) {
+      rank = position;
+      prevValue = row.value;
+    }
+
+    output.push({
+      rank,
+      rollNo: row.rollNo,
+      name: row.name,
+      value: row.value,
+      batchCode: row.batchCode,
+      batchName: row.batchName,
+    });
+  }
+
+  return output;
+}
+
 function parsePayload(rollNo: string, extracted: PortalExtraction): ScrapedPayload {
   const subjects = normalizeSubjectRows(extracted.result || []);
   const noRecord = Boolean(
@@ -670,6 +712,7 @@ function parsePayload(rollNo: string, extracted: PortalExtraction): ScrapedPaylo
   const cgpa = summary.cgpa ?? calculateCgpa(subjects);
   const sgpa = summary.sgpa;
   const percentage = summary.percentage;
+  const isPendingResult = summary.resultLabel === 'INC';
 
   if (noRecord) {
     return {
@@ -682,6 +725,23 @@ function parsePayload(rollNo: string, extracted: PortalExtraction): ScrapedPaylo
       percentage,
       cgpa,
       sgpa,
+      subjects,
+      student: extracted.student || {},
+      rawText: extracted.rawText,
+    };
+  }
+
+  if (isPendingResult) {
+    return {
+      status: 'result_pending',
+      message: 'Result is INC (incomplete) and excluded from ranking.',
+      name,
+      branch,
+      semester: FIXED_SEMESTER,
+      totalMarks,
+      percentage: null,
+      cgpa: null,
+      sgpa: null,
       subjects,
       student: extracted.student || {},
       rawText: extracted.rawText,
@@ -922,19 +982,21 @@ export async function getStudentRanks(rollNo: string) {
   const sgpaFromRaw = toNullableNumber(summaryObject?.sgpa) ?? summary.sgpa;
   const cgpaFromRaw = toNullableNumber(summaryObject?.cgpa) ?? summary.cgpa;
   const fallbackPercentage = toNullableNumber(summaryObject?.percentage) ?? summary.percentage;
+  const hasIncResult = summary.resultLabel === 'INC';
 
   const normalizedStudent = {
     ...student,
-    sgpa: sgpaFromRaw,
+    result_status: hasIncResult ? 'result_pending' : student.result_status,
+    sgpa: hasIncResult ? null : sgpaFromRaw,
     total_marks: toNullableNumber(student.total_marks) ?? fallbackTotalMarks,
-    cgpa: cgpaFromRaw ?? toNullableNumber(student.cgpa) ?? fallbackCgpa,
-    percentage: toNullableNumber(student.percentage) ?? fallbackPercentage,
+    cgpa: hasIncResult ? null : (cgpaFromRaw ?? toNullableNumber(student.cgpa) ?? fallbackCgpa),
+    percentage: hasIncResult ? null : (toNullableNumber(student.percentage) ?? fallbackPercentage),
   };
 
   const semesterStudents = await listSuccessfulStudents(normalizedStudent.semester);
   const allStudents = await listSuccessfulStudents();
-  const batchInfo = getBatchInfo(normalizedStudent.roll_no || rollNo);
-  const batchStudents = semesterStudents.filter((student) => getBatchInfo(student.roll_no || '').code === batchInfo.code);
+  const batchInfo = getBatchInfoFromRoll(normalizedStudent.roll_no || rollNo);
+  const batchStudents = semesterStudents.filter((student) => getBatchInfoFromRoll(student.roll_no || '').code === batchInfo.code);
 
   const selfSgpa = metricOf(normalizedStudent, 'sgpa');
   const selfCgpa = metricOf(normalizedStudent, 'cgpa');
@@ -962,5 +1024,49 @@ export async function getStudentRanks(rollNo: string) {
     departmentSize: allStudents.length,
     rawResult,
     subjects: normalizedSubjects,
+  };
+}
+
+export async function getRankings(options?: {
+  scope?: 'department' | 'batch';
+  batchCode?: string;
+}): Promise<{
+  scope: 'department' | 'batch';
+  batchCode: string | null;
+  batchName: string | null;
+  totalStudents: number;
+  sgpa: RankingEntry[];
+  cgpa: RankingEntry[];
+}> {
+  const scope = options?.scope === 'batch' ? 'batch' : 'department';
+  const allStudents = await listSuccessfulStudents();
+
+  let scopedStudents = allStudents.map((student) => ({
+    ...student,
+    sgpa: (student as { sgpa?: unknown }).sgpa,
+    cgpa: student.cgpa,
+  }));
+
+  let batchCode: string | null = null;
+  let batchName: string | null = null;
+
+  if (scope === 'batch') {
+    const requested = (options?.batchCode || '').trim();
+    if (requested) {
+      batchCode = requested;
+      batchName = getBatchNameFromCode(batchCode);
+      scopedStudents = scopedStudents.filter((student) => getBatchInfoFromRoll(student.roll_no || '').code === batchCode);
+    } else {
+      scopedStudents = [];
+    }
+  }
+
+  return {
+    scope,
+    batchCode,
+    batchName,
+    totalStudents: scopedStudents.length,
+    sgpa: createMetricRanking(scopedStudents, 'sgpa'),
+    cgpa: createMetricRanking(scopedStudents, 'cgpa'),
   };
 }
